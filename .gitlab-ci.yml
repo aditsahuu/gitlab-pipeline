@@ -1,0 +1,57 @@
+workflow:
+  rules:
+    - if: '$CI_PIPELINE_SOURCE == "web" && $CI_COMMIT_BRANCH =~ /^env-/'
+
+stages:
+  - build
+  - delivery_staging
+
+variables:
+  DOCKER_IMAGE_NAME: "${DOCKER_IMAGE_NAME}"
+  DOCKER_REGISTRY: "${DOCKER_REGISTRY}"
+  IMAGE_VERSION: "latest"  
+  DOCKER_HOST: tcp://docker:2375
+  DOCKER_TLS_CERTDIR: ""
+  SONAR_HOST_URL: "${SONAR_HOST_URL}"
+  SONAR_LOGIN: "${SONAR_TOKEN}"
+  SONAR_USER_HOME: "${CI_PROJECT_DIR}/.sonar"  
+  GIT_DEPTH: "0"  
+
+before_script:
+  - export ENV=$(echo "$CI_COMMIT_BRANCH" | sed 's/^env-//')
+
+build:
+  image: maven:3.6.3-jdk-8 (Change as per Requirement)
+  stage: build
+  tags:
+    - v55-group-docker
+  before_script:
+    - cp settings.xml /root/.m2/settings.xml
+  cache:
+    key: "${CI_JOB_NAME}"
+    paths:
+      - .sonar/cache
+      - .m2/repository
+  artifacts:
+    paths:
+      - target/*.jar
+  script:
+    - mvn clean compile package
+    - mvn verify sonar:sonar -Dsonar.projectKey=$CI_PROJECT_NAME -Dsonar.host.url="${SONAR_HOST_URL}" -Dsonar.login="${SONAR_LOGIN}"
+
+delivery_staging:
+  image: docker:24.0.5-dind (Change as per Requirement)
+  services:
+    - name: docker:24.0.5-dind
+      alias: docker
+  stage: delivery_staging
+  tags:
+    - v55-group-docker
+  dependencies:
+    - build
+  script:
+    - echo "Starting to deploy"
+    - echo "Building Project for environment $ENV using Dockerfile.$ENV"
+    - docker build -t $DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$ENV-$IMAGE_VERSION -f Dockerfile.$ENV .
+    - echo "Pushing Image  to Docker Registry"
+    - docker push $DOCKER_REGISTRY/$DOCKER_IMAGE_NAME:$ENV-$IMAGE_VERSION
